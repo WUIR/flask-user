@@ -18,13 +18,18 @@ SWAGGER_HTML = """<!DOCTYPE html>
 <body>
   <div id="swagger-ui"></div>
   <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-standalone-preset.js"></script>
   <script>
     SwaggerUIBundle({
       url: "/api/v1/openapi.json",
       dom_id: "#swagger-ui",
-      presets: [SwaggerUIBundle.presets.apis],
-      layout: "BaseLayout",
-      deepLinking: true
+      presets: [
+        SwaggerUIBundle.presets.apis,
+        SwaggerUIStandalonePreset
+      ],
+      layout: "StandaloneLayout",
+      deepLinking: true,
+      showCommonExtensions: true
     });
   </script>
 </body>
@@ -105,7 +110,6 @@ def _build_openapi_spec(app):
                 }
             }
         },
-        "security": [{"Bearer": []}],
         "paths": {
             "/auth/register": {
                 "post": {

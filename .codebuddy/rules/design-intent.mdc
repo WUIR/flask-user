@@ -1,0 +1,205 @@
+---
+description: 解释 flask-user-system.mdc 提示词的设计意图、架构决策与使用方式
+globs: 
+---
+# 设计意图文档 — Flask 用户系统提示词
+
+## 概述
+
+`flask-user-system.mdc` 是指导 CodeBuddy AI 开发 Flask 用户系统的**全局行为规范**。它不是一个静态的说明文档，而是一份**可执行的开发契约**——AI 在生成代码时必须遵循其中的每一项约定。
+
+本文档解释这份提示词为什么这样设计，每个章节背后的权衡与考量。
+
+---
+
+## 一、提示词的整体设计哲学
+
+### 1.1 三明治结构
+
+```
+[项目总览]  →  目标对齐：告诉 AI 要做什么
+[技术规范]  →  约束空间：告诉 AI 怎么做、不能怎么做  
+[开发约定]  →  尾部加固：确保输出一致、可维护
+```
+
+- **顶部**（§1-3）：建立上下文。让 AI 理解这是一个 Flask 项目，不是 Django 或 FastAPI。
+- **中部**（§4-9）：具体的可执行约束。每条都可以在生成代码后通过 lint/test 自动验证。
+- **底部**（§10-11）：风格与流程约定。确保多轮对话中输出风格一致。
+
+### 1.2 为什么用 .mdc 格式而不是 .md
+
+`.mdc` 是 CodeBuddy 的自定义规则格式，支持：
+- `description` 元数据段：IDE 能识别规则的用途
+- `globs` 模式匹配：可配置只在特定文件范围内生效（本项目未启用 glob 过滤，因为它对整个项目有效）
+- 与 `.codebuddy/rules/` 目录集成：自动加载，无需手动引用
+
+### 1.3 为什么选择这种详细度
+
+这份提示词大约 280 行，详细但不过度。设计取舍：
+
+| 维度 | 选择 | 理由 |
+|------|------|------|
+| 字段级定义 | §5 的表字段精确到类型和约束 | 避免 AI 猜测字段名（如 `password_hash` vs `hashed_password`） |
+| 状态码级定义 | §4 的每个接口标注了鉴权要求 | 避免 AI 漏掉 `@jwt_required()` 装饰器 |
+| 不写具体代码 | 整篇没有一行 Python 代码 | 保持提示词与实现解耦，技术栈变更时只需改 §2 表格 |
+| 测试用例级枚举 | §7 列出每类接口必须覆盖的用例 | 防止 AI 只写快乐路径（happy path）而忽略错误处理 |
+
+---
+
+## 二、各章节的设计意图
+
+### §2 技术栈
+
+为什么这样选型：
+
+```text
+Flask 3.x       → 轻量，适合 RESTful API，生态成熟
+SQLAlchemy      → ORM 标杆，alembic 迁移是行业标准
+Marshmallow     → 比 Pydantic 更轻，与 Flask 社区更紧密
+JWT Extended    → 开箱即用的 refresh token 支持
+SQLite/Postgres → 开发/生产分离，零配置开发环境
+pytest-cov      → flask test 命令太弱，pytest-cov 支持 --fail-under
+```
+
+**trade-off**: 选了 Marshmallow 而非 Pydantic v2，因为 Marshmallow 的 `@validates` 装饰器对密码强度校验表达更直观。如果未来需要更严格的类型提示，可用 Pydantic 替换，只需改 `app/schemas/user.py`。
+
+### §3 项目结构
+
+设计原则：**按职责分层，不按功能分层**。
+
+```
+View (Blueprint) → 解析请求 + 调用 Service → 序列化响应
+Service          → 业务逻辑，不依赖 Flask 上下文
+Model            → 数据映射，不含业务逻辑
+Schema           → 输入校验，不含数据库操作
+```
+
+这样做的好处：
+- **Service 层可脱离 HTTP 测试**：用 pytest 直接调用方法，不需要 `test_client`
+- **Model 层不被业务逻辑污染**：`User.check_password()` 是模型行为，放在 model 层；`User.register()` 是业务逻辑，放在 service 层
+- **Schema 层可复用**：同一个 Schema 既用于 API 校验，也用于 CLI 工具或管理后台
+
+### §4 API 设计规范
+
+#### 4.1 统一响应格式
+
+```json
+{ "success": true/false, "message": "...", "data": ..., "errors": ... }
+```
+
+选择这种格式的原因：
+- **移动端友好**：前端/小程序只需要检查 `success` 字段，不用解析 HTTP 状态码
+- **错误信息可枚举**：`errors` 字段支持字段级错误，移动端可直接映射到表单字段
+- **与微信小程序生态兼容**：小程序的 `wx.request` 只返回 statusCode，不区分业务错误
+
+#### 4.2 端点设计
+
+- **`/auth/register` 返回 JWT**：注册即登录，减少移动端一次额外请求
+- **`/users/me` 替代 `/users/{id}`**：用户本人信息无需暴露 ID，减少 URL 猜测风险
+- **管理员接口和普通接口放在同一个 Blueprint**：路由统一，权限在 decorator 层控制
+
+### §5 数据库模型
+
+字段设计的考量：
+- **`password_hash` 而非 `password`**：明确这是一个哈希值，不是明码。`password` 作为 property setter 对外暴露
+- **`role` 默认 `'user'` 而非 `None`**：避免每次检查时都要处理 None 情况
+- **`is_active` 默认 `True`**：注册即激活，不是邮箱验证后才激活（简化流程，适配移动端快速注册场景）
+- **`last_login_at`**：安全审计需要，不是业务功能
+
+### §6 移动端适配
+
+这份提示词中最容易被忽略但最重要的章节。
+
+- **JWT 而非 Session**：Session 需要 Cookie，移动端（App/小程序）Cookie 管理复杂
+- **access_token 15min + refresh_token 7d**：15 分钟短过期防止泄露后滥用，7 天长过期减少登录频率
+- **仅 JSON，无 HTML**：所有端点返回 `application/json`，不返回渲染页面。这避免了 AI 添加 `render_template` 的错误倾向
+
+### §7 测试要求
+
+为什么要求 **100% 覆盖率**而不是常规的 80%：
+- 这是一个**用户系统**，涉及认证鉴权，安全敏感
+- 代码量不大（~400 行），100% 是可实现的
+- `--cov-fail-under=100` 在 CI 中强制执行，防止新代码降低覆盖率
+
+测试用例枚举的设计意图：
+- **状态码断言**：所有接口都有明确的预期状态码，方便 CI 自动验证
+- **异常流程覆盖**：每个正例配 2-3 个反例，确保错误处理代码不是僵尸代码
+- **明确的测试方法名**：`test_auth.py::TestRegister::test_register_duplicate_username` 这种命名即使不看代码也知道测试意图
+
+### §8 安全要求
+
+安全不是功能特性，而是**约束条件**。提示词不直接实现安全，而是通过约束防止 AI 写出不安全代码：
+
+- **不在代码中硬编码密钥**：AI 有时会把 `SECRET_KEY = "mysecret"` 写在配置文件里。提示词强制从环境变量读取
+- **密码哈希不可逆**：禁止 `password = Column(String)`，强制通过 `password_hash + setter` 实现
+- **敏感字段排除**：`to_dict()` 默认排除 `password_hash`，防止在 `/users/me` 或管理员列表中被返回
+
+### §9 CI/CD
+
+流水线的三个阶段对应三个质量门禁：
+
+```
+test  →  代码必须正确     (覆盖率 100% + lint 通过)
+build →  镜像必须可构建   (Dockerfile 正确)
+deploy → 服务必须可访问   (健康检查通过)
+```
+
+每个阶段失败都会阻止下一阶段，保证部署到 VPS 的代码一定是经过全面测试的。
+
+### §11 开发约定
+
+这是最重要的"元规则"——它不规定具体做什么，而是规定**代码应该长什么样**：
+
+```text
+"service 层不依赖 Flask 上下文" → 确保 Service 方法可单元测试
+"视图函数只做请求解析与响应序列化" → 避免业务逻辑泄漏到 Blueprint 中
+"异常统一由全局 error handler 捕获" → 不在视图函数内 try-catch 后返回 error_response
+```
+
+---
+
+## 三、如何扩展这份提示词
+
+### 3.1 新增功能模块（如：角色权限管理）
+
+1. 在 §2 技术栈中添加新依赖（如 `Flask-Principal`）
+2. 在 §4.2 接口清单中添加新端点
+3. 在 §5 中添加新模型表
+4. 在 §7 中添加测试用例
+
+### 3.2 切换技术栈（如：Marshmallow → Pydantic）
+
+1. 修改 §2 技术栈表格
+2. 修改 §3 项目结构中的文件名（如 `app/schemas/user.py` → `app/schemas/user_schema.py`）
+3. 其他章节不需要改动，因为提示词不包含具体实现代码
+
+### 3.3 添加新阶段
+
+提示词的 §1-11 按逻辑顺序排列。新增章节编号延续即可（§12, §13...），保持 Markdown 同级标题格式。
+
+---
+
+## 四、已知局限
+
+| 局限 | 原因 | 改进方向 |
+|------|------|---------|
+| 不支持 OAuth2 社交登录 | 提示词聚焦基础密码登录 | 可在 §2 添加 `Authlib`，§4 添加 OAuth 端点 |
+| 不支持邮箱验证 | 简化流程，适配移动端 | 可在 §5 的 User 表添加 `email_verified_at` |
+| 不支持 RBAC 细粒度权限 | `role` 字段仅区分 user/admin | 可添加 `permissions` 表或改用 `Flask-Principal` |
+| 不支持 WebSocket | Flask 原生不擅长 | 可添加 `Flask-SocketIO`，但提示词需重写 |
+
+---
+
+## 五、与 CodeBuddy 的交互方式
+
+当 AI 加载 `flask-user-system.mdc` 后：
+
+1. **生成代码时**：优先使用 §2 技术栈中的库，不引入未列出的依赖
+2. **接口实现时**：严格遵循 §4 的 URL 路径和响应格式
+3. **编写测试时**：确保覆盖 §7 枚举的所有用例，运行 `--cov-fail-under=100`
+4. **不确定时**：参考 §11 的开发约定做决策，不擅自猜测
+
+这份提示词不约束：
+- 变量命名风格（但建议与现有代码一致）
+- 缩进风格（由 `.editorconfig` 或 ruff 控制）
+- 注释密度（按需即可）
