@@ -18,6 +18,38 @@ from app.utils.response import error_response, success_response
 @api_bp.route("/auth/register", methods=["POST"])
 @limiter.limit("10/minute")
 def register():
+    """用户注册
+    ---
+    tags:
+      - Auth
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required: [username, email, password]
+          properties:
+            username:
+              type: string
+              example: alice
+              description: 3-80位字母/数字/下划线
+            email:
+              type: string
+              format: email
+              example: alice@example.com
+            password:
+              type: string
+              example: Pass1234
+              description: 至少8位，包含字母和数字
+    responses:
+      201:
+        description: 注册成功，返回用户信息 + JWT
+      409:
+        description: 用户名或邮箱已存在
+      422:
+        description: 数据校验失败
+    """
     schema = RegisterSchema()
     try:
         data = schema.load(request.get_json(silent=True) or {})
@@ -39,6 +71,33 @@ def register():
 @api_bp.route("/auth/login", methods=["POST"])
 @limiter.limit("10/minute")
 def login():
+    """用户登录
+    ---
+    tags:
+      - Auth
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required: [login, password]
+          properties:
+            login:
+              type: string
+              example: alice
+              description: 用户名或邮箱
+            password:
+              type: string
+              example: Pass1234
+    responses:
+      200:
+        description: 登录成功，返回 JWT
+      401:
+        description: 用户名/密码错误 或 账户被禁用
+      422:
+        description: 数据校验失败
+    """
     schema = LoginSchema()
     try:
         data = schema.load(request.get_json(silent=True) or {})
@@ -60,6 +119,26 @@ def login():
 @api_bp.route("/auth/refresh", methods=["POST"])
 @jwt_required(refresh=True)
 def refresh():
+    """刷新 Access Token
+    ---
+    tags:
+      - Auth
+    security:
+      - Bearer: []
+    parameters:
+      - in: header
+        name: Authorization
+        type: string
+        required: true
+        description: Refresh Token，格式: Bearer &lt;token&gt;
+    responses:
+      200:
+        description: 返回新的 access_token
+      401:
+        description: 未提供 Token
+      422:
+        description: 使用了 Access Token 而非 Refresh Token
+    """
     identity = get_jwt_identity()
     additional = {"role": get_jwt().get("role", "user")}
     new_access = create_access_token(identity=identity, additional_claims=additional)
@@ -69,4 +148,16 @@ def refresh():
 @api_bp.route("/auth/logout", methods=["POST"])
 @jwt_required(verify_type=False)
 def logout():
+    """用户登出
+    ---
+    tags:
+      - Auth
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: 登出成功
+      401:
+        description: 未提供 Token
+    """
     return success_response(message="已登出")
