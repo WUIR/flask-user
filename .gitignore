@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtualenv
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+
+# Database (Flask-SQLAlchemy 3.x stores in instance/)
+*.db
+instance/
+
+# Test / Coverage
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+
+# Docker
+.docker/
+
+# Migrations (keep dir, ignore db file)
+migrations/versions/*.pyc
+
+# OS
+.DS_Store
+Thumbs.db

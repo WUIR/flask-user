@@ -1,0 +1,282 @@
+---
+description: Flask 用户系统的全局开发规范，涵盖 RESTful API、测试与自动化部署
+globs: 
+---
+# Flask 用户系统 — 系统提示词
+
+## 1. 项目总览
+
+基于 Flask 实现的完整用户系统，对外提供 RESTful API 供移动端调用，支持用户注册、登录、Token 鉴权、用户信息管理（CRUD），并实现自动化测试（覆盖率 100%）与自动化 CI/CD 部署到公网 VPS。
+
+---
+
+## 2. 技术栈
+
+| 层级       | 技术                                                          |
+| ---------- | ------------------------------------------------------------- |
+| 框架       | Flask 3.x                                                     |
+| ORM        | Flask-SQLAlchemy + alembic（迁移）                            |
+| 序列化     | Marshmallow 或 Pydantic                                       |
+| 认证       | Flask-JWT-Extended（JWT access + refresh token）              |
+| 密码       | werkzeug.security (generate_password_hash / check_password_hash) |
+| 数据库     | SQLite（开发）/ PostgreSQL（生产）                            |
+| 测试       | pytest + pytest-cov                                           |
+| 部署       | Docker + Docker Compose + GitHub Actions                      |
+| 反向代理   | Nginx（HTTPS 终结）                                            |
+| VPS        | Ubuntu 22.04 / Debian 12                                      |
+
+---
+
+## 3. 项目结构
+
+```text
+Flask-user/
+├── app/
+│   ├── __init__.py              # create_app 工厂函数
+│   ├── settings.py              # 配置类（开发/测试/生产）
+│   ├── extensions.py            # db, jwt, migrate 初始化
+│   ├── models/
+│   │   ├── __init__.py
+│   │   └── user.py              # User 模型
+│   ├── api/
+│   │   ├── __init__.py
+│   │   ├── auth.py              # 注册、登录、刷新 token
+│   │   └── users.py             # 用户 CRUD 管理
+│   ├── schemas/
+│   │   ├── __init__.py
+│   │   └── user.py              # Marshmallow/Pydantic Schema
+│   ├── services/
+│   │   ├── __init__.py
+│   │   └── user_service.py      # 业务逻辑层
+│   └── utils/
+│       ├── __init__.py
+│       ├── errors.py            # 统一错误处理
+│       └── response.py          # 统一 JSON 响应格式
+├── tests/
+│   ├── __init__.py
+│   ├── conftest.py              # pytest fixtures（app, client, db）
+│   ├── test_auth.py             # 注册/登录/刷新 token 测试
+│   └── test_users.py            # 用户 CRUD 测试
+├── migrations/                  # alembic 迁移文件
+├── docker/
+│   ├── Dockerfile
+│   └── docker-compose.yml
+├── nginx/
+│   └── app.conf                 # Nginx 反向代理配置
+├── scripts/
+│   ├── deploy.sh                # VPS 部署脚本
+│   └── init_db.sh               # 数据库初始化
+├── .github/workflows/
+│   └── ci-cd.yml                # GitHub Actions 流水线
+├── requirements.txt
+├── pytest.ini
+├── .env.example
+├── .gitignore
+├── Makefile                     # 常用命令快捷方式
+├── manage.py                    # 入口脚本
+└── README.md
+```
+
+---
+
+## 4. API 设计规范
+
+### 4.1 基础规范
+
+- 统一前缀：`/api/v1`
+- 响应格式：
+
+```json
+{
+  "success": true,
+  "message": "操作成功",
+  "data": { ... },
+  "errors": null
+}
+```
+
+- 错误时：
+
+```json
+{
+  "success": false,
+  "message": "错误描述",
+  "data": null,
+  "errors": { "field": ["错误信息"] }
+}
+```
+
+### 4.2 接口清单
+
+| 方法     | 端点                    | 说明               | 鉴权     |
+| -------- | ----------------------- | ------------------ | -------- |
+| POST     | /api/v1/auth/register   | 用户注册           | 无需     |
+| POST     | /api/v1/auth/login      | 用户登录，返回 JWT | 无需     |
+| POST     | /api/v1/auth/refresh    | 刷新 access token  | Bearer   |
+| POST     | /api/v1/auth/logout     | 登出               | Bearer   |
+| GET      | /api/v1/users/me        | 获取当前用户信息   | Bearer   |
+| PUT      | /api/v1/users/me        | 更新当前用户信息   | Bearer   |
+| PUT      | /api/v1/users/me/password | 修改密码         | Bearer   |
+| DELETE   | /api/v1/users/me        | 注销当前用户       | Bearer   |
+| GET      | /api/v1/users           | 管理员：用户列表   | Admin    |
+| GET      | /api/v1/users/{id}      | 管理员：查看用户   | Admin    |
+| PUT      | /api/v1/users/{id}      | 管理员：更新用户   | Admin    |
+| DELETE   | /api/v1/users/{id}      | 管理员：删除用户   | Admin    |
+
+---
+
+## 5. 数据库模型
+
+### User
+
+| 字段           | 类型             | 约束                     |
+| -------------- | ---------------- | ------------------------ |
+| id             | UUID / Integer   | PK, auto                 |
+| username       | String(80)       | unique, not null         |
+| email          | String(120)      | unique, not null         |
+| password_hash  | String(256)      | not null                 |
+| nickname       | String(80)       | nullable                 |
+| avatar_url     | String(500)      | nullable                 |
+| phone          | String(20)       | nullable                 |
+| role           | String(20)       | default='user'           |
+| is_active      | Boolean          | default=True             |
+| is_verified    | Boolean          | default=False            |
+| last_login_at  | DateTime         | nullable                 |
+| created_at     | DateTime         | default=utcnow           |
+| updated_at     | DateTime         | onupdate=utcnow          |
+
+### 索引
+
+- `ix_user_email` — email
+- `ix_user_username` — username
+
+---
+
+## 6. 移动端适配
+
+- **认证方式**：JWT Bearer Token（access_token 15min + refresh_token 7d）
+- **内容协商**：仅支持 `application/json`，无服务端渲染页面
+- **分页**：列表接口统一支持 `?page=1&per_page=20`
+- **限流**：使用 Flask-Limiter 对 /api/v1/auth/login 做速率限制（防止暴力破解）
+- **CORS**：使用 Flask-CORS 白名单管理跨域
+
+---
+
+## 7. 测试要求（覆盖率 100%）
+
+### 工具
+- pytest + pytest-cov
+
+### 测试覆盖
+- 所有 API 端点：正常流程 + 异常流程
+- service 层所有业务方法
+- model 层约束与关系
+- utils 层工具函数
+
+### 配置
+
+```ini
+# pytest.ini
+[pytest]
+testpaths = tests
+addopts = -v --cov=app --cov-report=term-missing --cov-report=html
+```
+
+### 必须包含的测试用例
+
+#### Auth:
+- 注册成功（含密码加密验证）
+- 注册失败：用户名/邮箱重复、字段缺失、密码强度不足
+- 登录成功（返回 access + refresh token）
+- 登录失败：用户不存在、密码错误、用户被禁用
+- 刷新 token（有效期内成功、过期失败、伪造 token 失败）
+- 登出
+
+#### Users:
+- 获取当前用户信息（已认证、未认证、token 过期）
+- 更新个人信息（成功、字段校验失败）
+- 修改密码（成功、旧密码错误、新密码强度不足）
+- 注销账户
+
+#### Admin:
+- 用户列表（分页、搜索、排序）
+- 查看指定用户（存在、不存在）
+- 更新用户（角色变更、激活/禁用）
+- 删除用户
+- 非管理员访问返回 403
+
+---
+
+## 8. 安全要求
+
+- 密码使用 werkzeug `generate_password_hash`（pbkdf2:sha256）
+- JWT 密钥从环境变量读取，不硬编码
+- 密码最短长度 8 位，需包含字母+数字
+- 敏感信息不返回（password_hash 等）
+- 请求大小限制（Flask `MAX_CONTENT_LENGTH`）
+- HTTPS 仅在 Nginx 层强制（VPS 部署时）
+- 使用 `Flask-Talisman` 设置安全 HTTP 头
+
+---
+
+## 9. 自动化部署（CI/CD）
+
+### GitHub Actions 流水线
+
+```yaml
+# 触发：push 到 main / develop 分支
+jobs:
+  1. test:
+     - 安装 Python
+     - pip install -r requirements.txt
+     - pytest —cov —cov-fail-under=100
+  2. build:
+     - Docker build & tag
+     - Docker push 到 Docker Hub / GHCR
+  3. deploy:
+     - SSH 到 VPS
+     - 拉取最新镜像
+     - docker compose down && docker compose up -d
+```
+
+### VPS 部署架构
+
+```
+用户 → Nginx (443, HTTPS) → Gunicorn (8000) → Flask App → PostgreSQL
+```
+
+### deploy.sh 脚本功能
+- 安装 Docker & Docker Compose（如未安装）
+- 拉取最新 Docker 镜像
+- 执行数据库迁移（alembic upgrade head）
+- 重启服务
+- 健康检查（curl /api/v1/health）
+
+---
+
+## 10. Makefile 常用命令
+
+| 命令              | 说明                               |
+| ----------------- | ---------------------------------- |
+| make install      | 安装依赖                           |
+| make run          | 启动开发服务器（flask run）         |
+| make migrate      | 自动生成迁移文件                   |
+| make upgrade      | 执行数据库迁移                     |
+| make test         | 运行全部测试并生成覆盖率报告       |
+| make lint         | 代码风格检查（flake8 / ruff）       |
+| make docker-build | 构建 Docker 镜像                   |
+| make docker-up    | 启动 Docker Compose                 |
+| make deploy       | 执行部署脚本                       |
+
+---
+
+## 11. 开发约定
+
+- **所有 API 返回统一 JSON 格式**（见 4.1 节）
+- **service 层不依赖 Flask 上下文**，方便单元测试
+- **视图函数（Blueprint）只做请求解析与响应序列化**，业务逻辑下放到 service
+- **异常统一由全局 error handler 捕获**，不散落在各视图中
+- **所有配置项集中到 settings.py**，通过 `app.config` 注入
+- **数据库迁移使用 alembic**，不手动建表
+- **依赖锁定**：`requirements.txt` 固定版本号
+- **`.env` 文件不提交**，仅提交 `.env.example`

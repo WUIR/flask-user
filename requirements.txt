@@ -1,0 +1,20 @@
+Flask==3.0.3
+Flask-SQLAlchemy==3.1.1
+Flask-Migrate==4.1.0
+Flask-JWT-Extended==4.6.0
+Flask-CORS==5.0.0
+Flask-Limiter==3.8.0
+flask-talisman==1.1.0
+marshmallow==3.22.0
+python-dotenv==1.0.1
+gunicorn==19.6.0
+
+# Testing
+pytest==8.3.5
+pytest-cov==5.0.0
+
+# Lint / Format
+ruff==0.15.13
+
+# Production PostgreSQL (pre-installed in Docker image)
+# psycopg2-binary>=2.9
