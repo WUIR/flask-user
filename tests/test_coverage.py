@@ -146,3 +146,40 @@ class TestErrorHandlers:
             resp = c.get("/_test_invalid_token")
             assert resp.status_code == 401
             assert resp.get_json()["message"] == "无效的 Token"
+
+
+class TestSwaggerDocs:
+    """Cover Swagger/OpenAPI routes in app/__init__.py"""
+
+    def test_swagger_ui_page(self, client):
+        """swagger_ui() route"""
+        resp = client.get("/api/v1/docs/")
+        assert resp.status_code == 200
+        assert "swagger-ui" in resp.get_data(as_text=True)
+
+    def test_openapi_spec(self, client):
+        """openapi_spec() route — _build_openapi_spec branch"""
+        resp = client.get("/api/v1/openapi.json")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["openapi"] == "3.0.0"
+        assert "paths" in data
+        assert "/auth/register" in data["paths"]
+        assert data["info"]["title"] == "Flask 用户系统 API"
+
+    def test_openapi_spec_from_file(self, client, app, tmpdir):
+        """openapi_spec() route — file branch"""
+        import os, json, tempfile
+        # Temporarily write an openapi.json to app/static/
+        from flask import current_app
+        with app.app_context():
+            static_dir = os.path.join(current_app.root_path, "static")
+            os.makedirs(static_dir, exist_ok=True)
+            spec_path = os.path.join(static_dir, "openapi.json")
+            custom_spec = {"openapi": "3.0.0", "info": {"title": "Custom"}, "paths": {}}
+            with open(spec_path, "w", encoding="utf-8") as f:
+                json.dump(custom_spec, f)
+            resp = client.get("/api/v1/openapi.json")
+            assert resp.status_code == 200
+            assert resp.get_json()["info"]["title"] == "Custom"
+            os.remove(spec_path)
