@@ -34,8 +34,6 @@ def create_app(config_name: Optional[str] = None) -> Flask:
             {
                 "endpoint": "apispec",
                 "route": "/api/v1/apispec.json",
-                "rule_filter": lambda rule: rule.rule.startswith("/api/v1/"),
-                "model_filter": lambda tag: True,
             }
         ],
         "static_url_path": "/api/v1/flasgger_static",
